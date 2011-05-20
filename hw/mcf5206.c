@@ -7,144 +7,16 @@
  */
 #include "hw.h"
 #include "mcf.h"
-#include "qemu-timer.h"
+
 #include "sysemu.h"
 
-/* General purpose timer module.  */
-typedef struct {
-    uint16_t tmr;
-    uint16_t trr;
-    uint16_t tcr;
-    uint16_t ter;
-    ptimer_state *timer;
-    qemu_irq irq;
-    int irq_state;
-} m5206_timer_state;
 
-#define TMR_RST 0x01
-#define TMR_CLK 0x06
-#define TMR_FRR 0x08
-#define TMR_ORI 0x10
-#define TMR_OM  0x20
-#define TMR_CE  0xc0
-
-#define TER_CAP 0x01
-#define TER_REF 0x02
-
-static void m5206_timer_update(m5206_timer_state *s)
-{
-    if ((s->tmr & TMR_ORI) != 0 && (s->ter & TER_REF))
-        qemu_irq_raise(s->irq);
-    else
-        qemu_irq_lower(s->irq);
-}
-
-static void m5206_timer_reset(m5206_timer_state *s)
-{
-    s->tmr = 0;
-    s->trr = 0;
-}
-
-static void m5206_timer_recalibrate(m5206_timer_state *s)
-{
-    int prescale;
-    int mode;
-
-    ptimer_stop(s->timer);
-
-    if ((s->tmr & TMR_RST) == 0)
-        return;
-
-    prescale = (s->tmr >> 8) + 1;
-    mode = (s->tmr >> 1) & 3;
-    if (mode == 2)
-        prescale *= 16;
-
-    if (mode == 3 || mode == 0)
-        hw_error("m5206_timer: mode %d not implemented\n", mode);
-    if ((s->tmr & TMR_FRR) == 0)
-        hw_error("m5206_timer: free running mode not implemented\n");
-
-    /* Assume 66MHz system clock.  */
-    ptimer_set_freq(s->timer, 66000000 / prescale);
-
-    ptimer_set_limit(s->timer, s->trr, 0);
-
-    ptimer_run(s->timer, 0);
-}
-
-static void m5206_timer_trigger(void *opaque)
-{
-    m5206_timer_state *s = (m5206_timer_state *)opaque;
-    s->ter |= TER_REF;
-    m5206_timer_update(s);
-}
-
-static uint32_t m5206_timer_read(m5206_timer_state *s, uint32_t addr)
-{
-    switch (addr) {
-    case 0:
-        return s->tmr;
-    case 4:
-        return s->trr;
-    case 8:
-        return s->tcr;
-    case 0xc:
-        return s->trr - ptimer_get_count(s->timer);
-    case 0x11:
-        return s->ter;
-    default:
-        return 0;
-    }
-}
-
-static void m5206_timer_write(m5206_timer_state *s, uint32_t addr, uint32_t val)
-{
-    switch (addr) {
-    case 0:
-        if ((s->tmr & TMR_RST) != 0 && (val & TMR_RST) == 0) {
-            m5206_timer_reset(s);
-        }
-        s->tmr = val;
-        m5206_timer_recalibrate(s);
-        break;
-    case 4:
-        s->trr = val;
-        m5206_timer_recalibrate(s);
-        break;
-    case 8:
-        s->tcr = val;
-        break;
-    case 0xc:
-        ptimer_set_count(s->timer, val);
-        break;
-    case 0x11:
-        s->ter &= ~val;
-        break;
-    default:
-        break;
-    }
-    m5206_timer_update(s);
-}
-
-static m5206_timer_state *m5206_timer_init(qemu_irq irq)
-{
-    m5206_timer_state *s;
-    QEMUBH *bh;
-
-    s = (m5206_timer_state *)qemu_mallocz(sizeof(m5206_timer_state));
-    bh = qemu_bh_new(m5206_timer_trigger, s);
-    s->timer = ptimer_init(bh);
-    s->irq = irq;
-    m5206_timer_reset(s);
-    return s;
-}
 
 /* System Integration Module.  */
 
 typedef struct {
     CPUState *env;
-    m5206_timer_state *timer[2];
+    void *timer[2];
     void *uart[2];
     uint8_t scr;
     uint8_t icr[14];
@@ -264,9 +136,9 @@ static void m5206_mbar_reset(m5206_mbar_state *s)
 static uint32_t m5206_mbar_read(m5206_mbar_state *s, uint32_t offset)
 {
     if (offset >= 0x100 && offset < 0x120) {
-        return m5206_timer_read(s->timer[0], offset - 0x100);
+        return mcf_timer_read(s->timer[0], offset - 0x100);
     } else if (offset >= 0x120 && offset < 0x140) {
-        return m5206_timer_read(s->timer[1], offset - 0x120);
+        return mcf_timer_read(s->timer[1], offset - 0x120);
     } else if (offset >= 0x140 && offset < 0x160) {
         return mcf_uart_read(s->uart[0], offset - 0x140);
     } else if (offset >= 0x180 && offset < 0x1a0) {
@@ -302,10 +174,10 @@ static void m5206_mbar_write(m5206_mbar_state *s, uint32_t offset,
                              uint32_t value)
 {
     if (offset >= 0x100 && offset < 0x120) {
-        m5206_timer_write(s->timer[0], offset - 0x100, value);
+        mcf_timer_write(s->timer[0], offset - 0x100, value);
         return;
     } else if (offset >= 0x120 && offset < 0x140) {
-        m5206_timer_write(s->timer[1], offset - 0x120, value);
+        mcf_timer_write(s->timer[1], offset - 0x120, value);
         return;
     } else if (offset >= 0x140 && offset < 0x160) {
         mcf_uart_write(s->uart[0], offset - 0x140, value);
@@ -530,8 +402,8 @@ qemu_irq *mcf5206_init(uint32_t base, CPUState *env)
     cpu_register_physical_memory(base, 0x00001000, iomemtype);
 
     pic = qemu_allocate_irqs(m5206_mbar_set_irq, s, 14);
-    s->timer[0] = m5206_timer_init(pic[9]);
-    s->timer[1] = m5206_timer_init(pic[10]);
+    s->timer[0] = mcf_timer_init(pic[9], 66000000);
+    s->timer[1] = mcf_timer_init(pic[10], 66000000);
     s->uart[0] = mcf_uart_init(pic[12], serial_hds[0]);
     s->uart[1] = mcf_uart_init(pic[13], serial_hds[1]);
     s->env = env;
