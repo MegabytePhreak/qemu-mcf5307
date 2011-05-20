@@ -34,6 +34,7 @@
 enum m68k_cpuid {
     M68K_CPUID_M5206,
     M68K_CPUID_M5208,
+    M68K_CPUID_M5307,
     M68K_CPUID_CFV4E,
     M68K_CPUID_ANY,
 };
@@ -48,6 +49,7 @@ struct m68k_def_t {
 static m68k_def_t m68k_cpu_defs[] = {
     {"m5206", M68K_CPUID_M5206},
     {"m5208", M68K_CPUID_M5208},
+    {"m5307", M68K_CPUID_M5307},
     {"cfv4e", M68K_CPUID_CFV4E},
     {"any", M68K_CPUID_ANY},
     {NULL, 0},
@@ -115,6 +117,11 @@ static int cpu_m68k_set_model(CPUM68KState *env, const char *name)
         m68k_set_feature(env, M68K_FEATURE_BRAL);
         m68k_set_feature(env, M68K_FEATURE_CF_EMAC);
         m68k_set_feature(env, M68K_FEATURE_USP);
+        break;
+    case M68K_CPUID_M5307:
+        m68k_set_feature(env, M68K_FEATURE_CF_ISA_A);
+        /* 5307 actually has a plain MAC */
+        m68k_set_feature(env, M68K_FEATURE_CF_EMAC);
         break;
     case M68K_CPUID_CFV4E:
         m68k_set_feature(env, M68K_FEATURE_CF_ISA_A);
