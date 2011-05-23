@@ -70,7 +70,6 @@ static void mcf_timer_recalibrate(mcf_timer_state *s)
         hw_error("mcf_timer: free running mode not implemented\n");
     }
 
-    /* Assume 66MHz system clock.  */
     ptimer_set_freq(s->timer, s->sysclk / prescale);
 
     ptimer_set_limit(s->timer, s->trr, 0);

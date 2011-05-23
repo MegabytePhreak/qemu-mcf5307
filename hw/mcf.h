@@ -20,6 +20,9 @@ void *mcf_timer_init(qemu_irq irq, unsigned int sysclk);
 uint32_t mcf_timer_read(void *opaque, uint32_t addr);
 void mcf_timer_write(void *opaque, uint32_t addr, uint32_t val);
 
+/* mcf5307.c */
+qemu_irq *mcf5307_init(uint32_t base, CPUState *env);
+
 /* mcf5206.c */
 qemu_irq *mcf5206_init(uint32_t base, CPUState *env);
 
