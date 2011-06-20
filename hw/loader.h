@@ -13,6 +13,7 @@ int load_aout(const char *filename, target_phys_addr_t addr, int max_sz,
               int bswap_needed, target_phys_addr_t target_page_size);
 int load_uimage(const char *filename, target_phys_addr_t *ep,
                 target_phys_addr_t *loadaddr, int *is_linux);
+int load_srec(const char *filename, target_phys_addr_t *ep);
 
 int read_targphys(const char *name,
                   int fd, target_phys_addr_t dst_addr, size_t nbytes);

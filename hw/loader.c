@@ -515,6 +515,146 @@ out:
     return ret;
 }
 
+typedef enum {
+    SREC_IDLE,
+    SREC_TYPE,
+    SREC_COUNT,
+    SREC_ADDR,
+    SREC_DATA,
+} srec_state;
+
+static inline char xatoi(char val)
+{
+    switch (val) {
+    case '0' ... '9':
+            val -= '0';
+            break;
+    case 'a' ... 'f':
+            val = 10 + val - 'a';
+            break;
+    case 'A' ... 'F':
+            val = 10 + val - 'A';
+            break;
+    }
+    return val;
+}
+
+static int srec_byte(uint8_t input, target_phys_addr_t *ep)
+{
+    static srec_state state;
+    static int first_nibble;
+    static uint8_t byte;
+    static int addr_len;
+    static uint32_t addr;
+    static int len;
+    static int buf_count;
+    static uint8_t buf[256];
+    static int type;
+
+    if (input == 'S') {
+        state = SREC_TYPE;
+        return 0;
+    }
+
+    if (state >= SREC_COUNT) {
+        if (first_nibble) {
+            byte = xatoi(input) << 4;
+            first_nibble = 0;
+            return 0;
+        } else {
+            byte |= xatoi(input);
+            first_nibble = 1;
+        }
+    }
+
+    switch (state) {
+    case SREC_IDLE:
+        break;
+    case SREC_TYPE: {
+        type = input - '0';
+        if (type >= 1 && type <= 3) {
+            addr_len = type + 1;
+            state = SREC_COUNT;
+            first_nibble = 1;
+            addr = 0;
+        } else if (type >= 7 && type <= 9) {
+            addr_len = 2 + (9 - type);
+            state = SREC_COUNT;
+            first_nibble = 1;
+            addr = 0;
+        } else {
+            state = SREC_IDLE;
+        }
+        break;
+    }
+    case SREC_COUNT:
+        len = byte - 1; /*Ignore the checksum at the end */
+        len -= addr_len; /* len is only the length of the actual data */
+        state = SREC_ADDR;
+        buf_count = 0;
+        break;
+    case SREC_ADDR:
+        addr <<= 8;
+        addr |= byte;
+        if (--addr_len == 0) {
+            state = SREC_DATA;
+            if (type >= 7 && type <= 9) {
+                *ep = addr;
+                state = SREC_IDLE;
+            }
+        }
+        break;
+    case SREC_DATA:
+        buf[buf_count++] = byte;
+        if (buf_count >= sizeof(buf)) {
+            printf("SREC Line buffer exceeded\n");
+            state = SREC_IDLE;
+        } else if (buf_count >= len) {
+            cpu_physical_memory_write_rom(addr, buf, len);
+            printf("Line read. Addr = 0x%x,Len = %d\n", addr, len);
+            state = SREC_IDLE;
+            return len;
+        }
+        break;
+    }
+    return 0;
+}
+
+static int srec_input(uint8_t *buf, int size, target_phys_addr_t *ep)
+{
+    int i;
+    int len = 0;
+
+    for (i = 0; i < size; i++) {
+        len += srec_byte(buf[i], ep);
+    }
+    return len;
+}
+
+int load_srec(const char *filename, target_phys_addr_t * ep)
+{
+    FILE *fd;
+    uint8_t buf[256];
+    int count;
+    int len = 0;
+
+    fd = fopen(filename, "rb");
+    if (!fd) {
+        return -1;
+    }
+
+    do {
+        count = fread(buf, 1, sizeof(buf), fd);
+        len += srec_input(buf, count, ep);
+    } while (count);
+
+    if (len == 0) {
+        return -1;
+    } else {
+        return len;
+    }
+}
+
 /*
  * Functions for reboot-persistent memory regions.
  *  - used for vga bios and option roms.
